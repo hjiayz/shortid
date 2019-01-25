@@ -57,15 +57,15 @@ impl ShortID128 {
         })
     }
 
-    pub fn next(&mut self) -> Result<(), Error> {
+    pub fn next(&mut self) -> Result<[u8; 16], Error> {
         if self.sequence < u32::max_value() {
             self.sequence += 1;
-            return Ok(());
+            return Ok(self.to_be_bytes());
         };
         if (self.timestamp + 1) < now()? {
             self.timestamp += 1;
             self.sequence = 0;
-            return Ok(());
+            return Ok(self.to_be_bytes());
         };
         return Err(Error::TimeOverflow);
     }
@@ -122,15 +122,15 @@ impl ShortID96 {
         })
     }
 
-    pub fn next(&mut self) -> Result<(), Error> {
+    pub fn next(&mut self) -> Result<[u8; 12], Error> {
         if self.sequence < u16::max_value() {
             self.sequence += 1;
-            return Ok(());
+            return Ok(self.to_be_bytes());
         };
         if (self.timestamp + 1) < now()? {
             self.timestamp += 1;
             self.sequence = 0;
-            return Ok(());
+            return Ok(self.to_be_bytes());
         };
         return Err(Error::TimeOverflow);
     }
@@ -190,15 +190,15 @@ impl ShortID64 {
         })
     }
 
-    pub fn next(&mut self) -> Result<(), Error> {
+    pub fn next(&mut self) -> Result<[u8; 8], Error> {
         if self.sequence < u16::max_value() {
             self.sequence += 1;
-            return Ok(());
+            return Ok(self.to_be_bytes());
         };
         if (self.timestamp + 1) < now()? {
             self.timestamp += 1;
             self.sequence = 0;
-            return Ok(());
+            return Ok(self.to_be_bytes());
         };
         return Err(Error::TimeOverflow);
     }
