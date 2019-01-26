@@ -159,7 +159,7 @@ impl ShortID96 {
         let m = u32::from_be_bytes([b[8], b[9], b[10], b[11]]);
         ShortID96 {
             epoch: epoch,
-            timestamp: t + epoch,
+            timestamp: t.saturating_add(epoch),
             sequence: s,
             worker_id: w,
             machine_id: m,
@@ -220,7 +220,7 @@ impl ShortID64 {
         let w = b[7];
         ShortID64 {
             epoch: epoch,
-            timestamp: t + epoch,
+            timestamp: t.saturating_add(epoch),
             sequence: s,
             worker_id: w,
         }
@@ -258,5 +258,45 @@ impl From<ShortID96> for ShortID128 {
             machine_id: src.machine_id,
             worker_id: src.worker_id as u16,
         }
+    }
+}
+
+pub struct Builder128 {
+    machine_id: u32,
+}
+
+impl Builder128 {
+    pub fn new(machine_id: u32) -> Builder128 {
+        Builder128 { machine_id }
+    }
+    pub fn build(&self) -> Result<ShortID128, Error> {
+        ShortID128::new(self.machine_id)
+    }
+}
+
+pub struct Builder96 {
+    machine_id: u32,
+    epoch: u64,
+}
+
+impl Builder96 {
+    pub fn new(epoch: u64, machine_id: u32) -> Builder96 {
+        Builder96 { machine_id, epoch }
+    }
+    pub fn build(&self) -> Result<ShortID96, Error> {
+        ShortID96::new(self.epoch, self.machine_id)
+    }
+}
+
+pub struct Builder64 {
+    epoch: u64,
+}
+
+impl Builder64 {
+    pub fn new(epoch: u64) -> Builder64 {
+        Builder64 { epoch }
+    }
+    pub fn build(&self) -> Result<ShortID64, Error> {
+        ShortID64::new(self.epoch)
     }
 }
