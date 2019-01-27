@@ -165,6 +165,19 @@ impl ShortID96 {
             machine_id: m,
         }
     }
+
+    pub fn upgrade128(&self) -> ShortID128 {
+        ShortID128 {
+            timestamp: self.timestamp,
+            sequence: self.sequence as u32,
+            machine_id: self.machine_id,
+            worker_id: self.worker_id as u16,
+        }
+    }
+
+    pub fn to_be_bytes128(&self) -> [u8; 16] {
+        self.upgrade128().to_be_bytes()
+    }
 }
 
 //for standalone
@@ -225,39 +238,32 @@ impl ShortID64 {
             worker_id: w,
         }
     }
-}
 
-impl From<ShortID64> for ShortID96 {
-    fn from(src: ShortID64) -> ShortID96 {
+    pub fn upgrade96(&self, machine_id: u32) -> ShortID96 {
         ShortID96 {
-            epoch: src.epoch,
-            timestamp: src.timestamp,
-            sequence: src.sequence,
-            machine_id: 0,
-            worker_id: src.worker_id,
+            epoch: self.epoch,
+            timestamp: self.timestamp,
+            sequence: self.sequence,
+            machine_id,
+            worker_id: self.worker_id,
         }
     }
-}
 
-impl From<ShortID64> for ShortID128 {
-    fn from(src: ShortID64) -> ShortID128 {
+    pub fn to_be_bytes96(&self, machine_id: u32) -> [u8; 12] {
+        self.upgrade96(machine_id).to_be_bytes()
+    }
+
+    pub fn upgrade128(&self, machine_id: u32) -> ShortID128 {
         ShortID128 {
-            timestamp: src.timestamp,
-            sequence: src.sequence as u32,
-            machine_id: 0,
-            worker_id: src.worker_id as u16,
+            timestamp: self.timestamp,
+            sequence: self.sequence as u32,
+            machine_id,
+            worker_id: self.worker_id as u16,
         }
     }
-}
 
-impl From<ShortID96> for ShortID128 {
-    fn from(src: ShortID96) -> ShortID128 {
-        ShortID128 {
-            timestamp: src.timestamp,
-            sequence: src.sequence as u32,
-            machine_id: src.machine_id,
-            worker_id: src.worker_id as u16,
-        }
+    pub fn to_be_bytes128(&self, machine_id: u32) -> [u8; 16] {
+        self.upgrade128(machine_id).to_be_bytes()
     }
 }
 
