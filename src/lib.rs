@@ -6,303 +6,360 @@ pub enum Error {
     TimeOverflow,
     #[fail(display = "SystemTime before UNIX EPOCH!")]
     SystemTimeException,
-    #[fail(display = "too many threads")]
+    #[fail(display = "Too many threads")]
     WorkerIDOverflow,
+    #[fail(display = "SystemTime before EPOCH!")]
+    EpochException,
 }
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
+const UUID_TICKS_BETWEEN_EPOCHS: u64 = 0x01B2_1DD2_1381_4000;
+
+static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
-    static WORKER_ID: usize = {
+    static WORKER_ID: [u8;2] = {
         unsafe{
-            COUNTER.fetch_add(1, Ordering::SeqCst)
+            let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+            if id > u16::max_value() as usize {
+                panic!("too many threads")
+            };
+            (id as u16).to_be_bytes()
         }
     };
+    static SEQ: RefCell<u16> = RefCell::new(0);
+    static TIMESTAMP: RefCell<u64> = RefCell::new(now().unwrap());
 }
 
+//100ns since unix_epoch;
 fn now() -> Result<u64, Error> {
     use std::time::{SystemTime, UNIX_EPOCH};
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| Error::SystemTimeException)?;
-    Ok(time.as_secs() as u64 * 1_000 as u64 + time.subsec_millis() as u64)
+    Ok((time.as_nanos() / 100) as u64 + UUID_TICKS_BETWEEN_EPOCHS)
 }
 
-fn worker_id() -> usize {
-    WORKER_ID.with(|f| f.to_owned())
+fn worker_id() -> [u8; 2] {
+    WORKER_ID.with(|f| *f)
 }
 
-//for compatible UUID
-
-pub struct ShortID128 {
-    machine_id: u32,
-    worker_id: u16,
-    timestamp: u64,
-    sequence: u32,
-}
-
-impl ShortID128 {
-    pub fn new(machine_id: u32) -> Result<ShortID128, Error> {
-        let worker_id = worker_id();
-        if worker_id > (u16::max_value() as usize) {
-            return Err(Error::WorkerIDOverflow);
-        };
-        Ok(ShortID128 {
-            machine_id: machine_id,
-            worker_id: worker_id as u16,
-            timestamp: now()?,
-            sequence: 0,
-        })
-    }
-
-    pub fn next(&mut self) -> Result<[u8; 16], Error> {
-        if self.sequence < u32::max_value() {
-            self.sequence += 1;
-            return Ok(self.to_be_bytes());
-        };
-        if (self.timestamp + 1) < now()? {
-            self.timestamp += 1;
-            self.sequence = 0;
-            return Ok(self.to_be_bytes());
-        };
-        return Err(Error::TimeOverflow);
-    }
-
-    pub fn as_u128(&self) -> u128 {
-        u128::from_be_bytes(self.to_be_bytes())
-    }
-
-    pub fn to_be_bytes(&self) -> [u8; 16] {
-        let t = self.timestamp.to_be_bytes();
-        let s = self.sequence.to_be_bytes();
-        let m = self.machine_id.to_be_bytes();
-        let w = self.worker_id.to_be_bytes();
-        [
-            t[2], t[3], t[4], t[5], t[6], t[7], s[0], s[1], s[2], s[3], w[0], w[1], m[0], m[1],
-            m[2], m[3],
-        ]
-    }
-
-    pub fn from_be_bytes(b: &[u8; 16]) -> ShortID128 {
-        let t = u64::from_be_bytes([0, 0, b[0], b[1], b[2], b[3], b[4], b[5]]);
-        let s = u32::from_be_bytes([b[6], b[7], b[8], b[9]]);
-        let w = u16::from_be_bytes([b[10], b[11]]);
-        let m = u32::from_be_bytes([b[12], b[13], b[14], b[15]]);
-        ShortID128 {
-            timestamp: t,
-            sequence: s,
-            machine_id: m,
-            worker_id: w,
+fn time_inc(min_interval: u16) -> Result<(), Error> {
+    TIMESTAMP.with(|t| {
+        let mut time = t.borrow_mut();
+        if (*time) >= now()? {
+            return Err(Error::TimeOverflow);
         }
-    }
+        *time += min_interval as u64;
+        Ok(())
+    })
 }
 
-pub struct ShortID96 {
-    epoch: u64,
-    machine_id: u32,
-    worker_id: u8,
-    timestamp: u64,
-    sequence: u16,
-}
-
-impl ShortID96 {
-    pub fn new(epoch: u64, machine_id: u32) -> Result<ShortID96, Error> {
-        let worker_id = worker_id();
-        if worker_id > (u8::max_value() as usize) {
-            return Err(Error::WorkerIDOverflow);
-        };
-        Ok(ShortID96 {
-            epoch,
-            machine_id,
-            worker_id: worker_id as u8,
-            timestamp: now()?,
-            sequence: 0,
-        })
-    }
-
-    pub fn next(&mut self) -> Result<[u8; 12], Error> {
-        if self.sequence < u16::max_value() {
-            self.sequence += 1;
-            return Ok(self.to_be_bytes());
-        };
-        if (self.timestamp + 1) < now()? {
-            self.timestamp += 1;
-            self.sequence = 0;
-            return Ok(self.to_be_bytes());
-        };
-        return Err(Error::TimeOverflow);
-    }
-
-    pub fn as_u128(&self) -> u128 {
-        let d = self.to_be_bytes();
-        u128::from_be_bytes([
-            0, 0, 0, 0, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7], d[8], d[9], d[10], d[11],
-        ])
-    }
-
-    pub fn to_be_bytes(&self) -> [u8; 12] {
-        let t = (self.timestamp - self.epoch).to_be_bytes();
-        let s = self.sequence.to_be_bytes();
-        let m = self.machine_id.to_be_bytes();
-        let w = self.worker_id;
-        [
-            t[3], t[4], t[5], t[6], t[7], s[0], s[1], w, m[0], m[1], m[2], m[3],
-        ]
-    }
-
-    pub fn from_be_bytes(epoch: u64, b: &[u8; 16]) -> ShortID96 {
-        let t = u64::from_be_bytes([0, 0, 0, b[0], b[1], b[2], b[3], b[4]]);
-        let s = u16::from_be_bytes([b[5], b[6]]);
-        let w = b[7];
-        let m = u32::from_be_bytes([b[8], b[9], b[10], b[11]]);
-        ShortID96 {
-            epoch: epoch,
-            timestamp: t.saturating_add(epoch),
-            sequence: s,
-            worker_id: w,
-            machine_id: m,
+fn next(min_interval: u16) -> Result<(), Error> {
+    SEQ.with(|s| {
+        let mut seq = s.borrow_mut();
+        if *seq < (1 << 14 - 1) {
+            *seq += 1;
+            Ok(())
+        } else {
+            time_inc(min_interval)?;
+            *seq = 0;
+            Ok(())
         }
-    }
+    })
+}
 
-    pub fn upgrade128(&self) -> ShortID128 {
-        ShortID128 {
-            timestamp: self.timestamp,
-            sequence: self.sequence as u32,
-            machine_id: self.machine_id,
-            worker_id: self.worker_id as u16,
+fn timestamp() -> u64 {
+    TIMESTAMP.with(|t| *t.borrow())
+}
+
+fn seq() -> u16 {
+    SEQ.with(|s| *s.borrow())
+}
+
+///
+/// for compatible UUID
+/// 16 bit worker id and 24 bit machine_id
+///
+pub fn next_short_128(machine_id: &[u8; 4]) -> Result<[u8; 16], Error> {
+    next(1)?;
+    let t = timestamp();
+    let s = seq();
+    let w = worker_id();
+    let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
+    let time_mid = (((t >> 32) & 0xFFFF) as u16).to_be_bytes();
+    let time_high_and_version = ((((t >> 48) & 0x0FFF) as u16) | (1 << 12)).to_be_bytes();
+    Ok([
+        time_low[0],
+        time_low[1],
+        time_low[2],
+        time_low[3],
+        time_mid[0],
+        time_mid[1],
+        time_high_and_version[0],
+        time_high_and_version[1],
+        (((s & 0x3F00) >> 8) as u8) | 0x80,
+        (s & 0xFF) as u8,
+        w[0],
+        w[1],
+        machine_id[0],
+        machine_id[1],
+        machine_id[2],
+        machine_id[3],
+    ])
+}
+
+///
+/// 42 bit milliseconds timestamp
+/// 14 bit sequence
+/// 16 bit worker id
+/// 24 bit machine_id
+/// Big Endian Order
+///
+pub fn next_short_96(machine_id: &[u8; 3], epoch: u64) -> Result<[u8; 12], Error> {
+    next(10000)?;
+    let t = (timestamp()
+        .checked_sub(UUID_TICKS_BETWEEN_EPOCHS)
+        .ok_or_else(|| Error::EpochException)?
+        .checked_sub(epoch)
+        .ok_or_else(|| Error::EpochException)?)
+        / 10000;
+    let s = seq();
+    let t_hi = (t >> 2).to_be_bytes();
+    let [t_low_and_s_hi, s_low] = (((t as u16) << 14) | s).to_be_bytes();
+    let w = worker_id();
+    Ok([
+        t_hi[3],
+        t_hi[4],
+        t_hi[5],
+        t_hi[6],
+        t_hi[7],
+        t_low_and_s_hi,
+        s_low,
+        w[0],
+        w[1],
+        machine_id[0],
+        machine_id[1],
+        machine_id[2],
+    ])
+}
+
+pub fn short_96_to_128(short_96: &[u8; 12], epoch: u64, machine_id_hi: u8) -> [u8; 16] {
+    let c = short_96;
+    let t = (u64::from_le_bytes([c[5], c[4], c[3], c[2], c[1], c[0], 0, 0]) >> 6) * 10000
+        + epoch
+        + UUID_TICKS_BETWEEN_EPOCHS;
+    let s = u16::from_le_bytes([c[6], c[5]]) & 0x3fff;
+    let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
+    let time_mid = (((t >> 32) & 0xFFFF) as u16).to_be_bytes();
+    let time_high_and_version = ((((t >> 48) & 0x0FFF) as u16) | (1 << 12)).to_be_bytes();
+    [
+        time_low[0],
+        time_low[1],
+        time_low[2],
+        time_low[3],
+        time_mid[0],
+        time_mid[1],
+        time_high_and_version[0],
+        time_high_and_version[1],
+        (((s & 0x3F00) >> 8) as u8) | 0x80,
+        (s & 0xFF) as u8,
+        c[7],
+        c[8],
+        machine_id_hi,
+        c[9],
+        c[10],
+        c[11],
+    ]
+}
+
+///
+/// for standalone
+/// the number of threads less than 256
+///
+pub fn next_short_64(epoch: u64) -> Result<[u8; 8], Error> {
+    let w = worker_id();
+    if w[0] != 0 {
+        return Err(Error::WorkerIDOverflow);
+    }
+    next(10000)?;
+    let t = (timestamp()
+        .checked_sub(UUID_TICKS_BETWEEN_EPOCHS)
+        .ok_or_else(|| Error::EpochException)?
+        .checked_sub(epoch)
+        .ok_or_else(|| Error::EpochException)?)
+        / 10000;
+    let s = seq();
+    let t_hi = (t >> 2).to_be_bytes();
+    let [t_low_and_s_hi, s_low] = (((t as u16) << 14) | s).to_be_bytes();
+    Ok([
+        t_hi[3],
+        t_hi[4],
+        t_hi[5],
+        t_hi[6],
+        t_hi[7],
+        t_low_and_s_hi,
+        s_low,
+        w[1],
+    ])
+}
+
+pub fn short_64_to_96(short_64: &[u8; 8], machine_id: &[u8; 3]) -> [u8; 12] {
+    let s = short_64;
+    [
+        s[0],
+        s[1],
+        s[2],
+        s[3],
+        s[4],
+        s[5],
+        s[6],
+        0,
+        s[7],
+        machine_id[0],
+        machine_id[1],
+        machine_id[2],
+    ]
+}
+
+pub fn short_64_to_128(short_64: &[u8; 8], epoch: u64, machine_id: &[u8; 4]) -> [u8; 16] {
+    let short96 = short_64_to_96(&short_64, &[machine_id[1], machine_id[2], machine_id[3]]);
+    short_96_to_128(&short96, epoch, machine_id[0])
+}
+
+#[test]
+fn test_128() {
+    use uuid::Uuid;
+    use uuid::Variant;
+    let id = next_short_128(&[1, 1, 1, 1]).unwrap();
+    let hex: String = id.into_iter().map(|val| format!("{:0>2x}", val)).collect();
+    let my_uuid = Uuid::parse_str(&hex).unwrap();
+    let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
+    assert_eq!(ticks, timestamp());
+    assert_eq!(counter, seq());
+    assert_eq!(my_uuid.get_version_num(), 1usize);
+    assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
+}
+
+#[test]
+fn test_96() {
+    use uuid::Uuid;
+    use uuid::Variant;
+    let id96 = next_short_96(&[1, 1, 1], 0).unwrap();
+    let id128 = short_96_to_128(&id96, 0, 0);
+    let hex: String = id128
+        .into_iter()
+        .map(|val| format!("{:0>2x}", val))
+        .collect();
+    let my_uuid = Uuid::parse_str(&hex).unwrap();
+    let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
+    assert_eq!(ticks, timestamp() / 10000 * 10000);
+    assert_eq!(counter, seq());
+    assert_eq!(my_uuid.get_version_num(), 1usize);
+    assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
+}
+
+#[test]
+fn test_64() {
+    use uuid::Uuid;
+    use uuid::Variant;
+    let id64 = next_short_64(0).unwrap();
+    let id128 = short_64_to_128(&id64, 0, &[1u8, 1, 1, 1]);
+    let hex: String = id128
+        .into_iter()
+        .map(|val| format!("{:0>2x}", val))
+        .collect();
+    let my_uuid = Uuid::parse_str(&hex).unwrap();
+    let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
+    assert_eq!(ticks, timestamp() / 10000 * 10000);
+    assert_eq!(counter, seq());
+    assert_eq!(my_uuid.get_version_num(), 1usize);
+    assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
+}
+
+use std::sync::atomic::{AtomicU16, AtomicU64};
+
+static mut TIMESTAMP_ATOM: AtomicU64 = AtomicU64::new(0);
+static mut SEQ_ATOM: AtomicU16 = AtomicU16::new(0);
+
+fn next_atom() -> Result<(u64, u16), Error> {
+    unsafe {
+        let seq = SEQ_ATOM.get_mut();
+        let ts = TIMESTAMP_ATOM.get_mut();
+        if *ts == 0 {
+            *ts = now()?;
         }
-    }
-
-    pub fn to_be_bytes128(&self) -> [u8; 16] {
-        self.upgrade128().to_be_bytes()
-    }
-}
-
-//for standalone
-
-pub struct ShortID64 {
-    epoch: u64,
-    worker_id: u8,
-    timestamp: u64,
-    sequence: u16,
-}
-
-impl ShortID64 {
-    pub fn new(epoch: u64) -> Result<ShortID64, Error> {
-        let worker_id = worker_id();
-        if worker_id > (u8::max_value() as usize) {
-            return Err(Error::WorkerIDOverflow);
+        if *seq < (1 << 14 - 1) {
+            *seq += 1;
+        } else {
+            if *ts >= now()? {
+                return Err(Error::TimeOverflow);
+            }
+            *ts += 1;
+            *seq = 0;
         };
-        Ok(ShortID64 {
-            epoch: epoch,
-            worker_id: worker_id as u8,
-            timestamp: now()?,
-            sequence: 0,
-        })
-    }
-
-    pub fn next(&mut self) -> Result<[u8; 8], Error> {
-        if self.sequence < u16::max_value() {
-            self.sequence += 1;
-            return Ok(self.to_be_bytes());
-        };
-        if (self.timestamp + 1) < now()? {
-            self.timestamp += 1;
-            self.sequence = 0;
-            return Ok(self.to_be_bytes());
-        };
-        return Err(Error::TimeOverflow);
-    }
-
-    pub fn as_u64(&self) -> u64 {
-        u64::from_be_bytes(self.to_be_bytes())
-    }
-
-    pub fn to_be_bytes(&self) -> [u8; 8] {
-        let t = (self.timestamp - self.epoch).to_be_bytes();
-        let s = self.sequence.to_be_bytes();
-        let w = self.worker_id;
-        [t[3], t[4], t[5], t[6], t[7], s[0], s[1], w]
-    }
-
-    pub fn from_be_bytes(epoch: u64, b: &[u8; 16]) -> ShortID64 {
-        let t = u64::from_be_bytes([0, 0, 0, b[0], b[1], b[2], b[3], b[4]]);
-        let s = u16::from_be_bytes([b[5], b[6]]);
-        let w = b[7];
-        ShortID64 {
-            epoch: epoch,
-            timestamp: t.saturating_add(epoch),
-            sequence: s,
-            worker_id: w,
-        }
-    }
-
-    pub fn upgrade96(&self, machine_id: u32) -> ShortID96 {
-        ShortID96 {
-            epoch: self.epoch,
-            timestamp: self.timestamp,
-            sequence: self.sequence,
-            machine_id,
-            worker_id: self.worker_id,
-        }
-    }
-
-    pub fn to_be_bytes96(&self, machine_id: u32) -> [u8; 12] {
-        self.upgrade96(machine_id).to_be_bytes()
-    }
-
-    pub fn upgrade128(&self, machine_id: u32) -> ShortID128 {
-        ShortID128 {
-            timestamp: self.timestamp,
-            sequence: self.sequence as u32,
-            machine_id,
-            worker_id: self.worker_id as u16,
-        }
-    }
-
-    pub fn to_be_bytes128(&self, machine_id: u32) -> [u8; 16] {
-        self.upgrade128(machine_id).to_be_bytes()
+        Ok((*ts, *seq))
     }
 }
 
-pub struct Builder128 {
-    machine_id: u32,
+///
+/// uuidv1 generator
+///
+pub fn uuidv1(machine_id: &[u8; 6]) -> Result<[u8; 16], Error> {
+    let (t, s) = next_atom()?;
+    let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
+    let time_mid = (((t >> 32) & 0xFFFF) as u16).to_be_bytes();
+    let time_high_and_version = ((((t >> 48) & 0x0FFF) as u16) | (1 << 12)).to_be_bytes();
+    Ok([
+        time_low[0],
+        time_low[1],
+        time_low[2],
+        time_low[3],
+        time_mid[0],
+        time_mid[1],
+        time_high_and_version[0],
+        time_high_and_version[1],
+        (((s & 0x3F00) >> 8) as u8) | 0x80,
+        (s & 0xFF) as u8,
+        machine_id[0],
+        machine_id[1],
+        machine_id[2],
+        machine_id[3],
+        machine_id[4],
+        machine_id[5],
+    ])
 }
 
-impl Builder128 {
-    pub fn new(machine_id: u32) -> Builder128 {
-        Builder128 { machine_id }
-    }
-    pub fn build(&self) -> Result<ShortID128, Error> {
-        ShortID128::new(self.machine_id)
-    }
+///
+/// uuidv1 generator
+///
+pub fn next_short_128_sync(machine_id: &[u8; 6]) -> Result<[u8; 16], Error> {
+    uuidv1(machine_id)
 }
 
-pub struct Builder96 {
-    machine_id: u32,
-    epoch: u64,
+fn timestamp_sync() -> u64 {
+    unsafe { *TIMESTAMP_ATOM.get_mut() }
 }
 
-impl Builder96 {
-    pub fn new(epoch: u64, machine_id: u32) -> Builder96 {
-        Builder96 { machine_id, epoch }
-    }
-    pub fn build(&self) -> Result<ShortID96, Error> {
-        ShortID96::new(self.epoch, self.machine_id)
-    }
+fn seq_sync() -> u16 {
+    unsafe { *SEQ_ATOM.get_mut() }
 }
 
-pub struct Builder64 {
-    epoch: u64,
-}
-
-impl Builder64 {
-    pub fn new(epoch: u64) -> Builder64 {
-        Builder64 { epoch }
-    }
-    pub fn build(&self) -> Result<ShortID64, Error> {
-        ShortID64::new(self.epoch)
-    }
+#[test]
+fn test_uuidv1() {
+    use uuid::Uuid;
+    use uuid::Variant;
+    let id128 = next_short_128_sync(&[0, 0, 0, 0, 0, 0]).unwrap();
+    let hex: String = id128
+        .into_iter()
+        .map(|val| format!("{:0>2x}", val))
+        .collect();
+    let my_uuid = Uuid::parse_str(&hex).unwrap();
+    let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
+    assert_eq!(ticks, timestamp_sync());
+    assert_eq!(counter, seq_sync());
+    assert_eq!(my_uuid.get_version_num(), 1usize);
+    assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }
