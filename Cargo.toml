@@ -8,6 +8,7 @@ description = "uuidv1 generator and variant. safe and fast."
 keywords = ["uuid", "uuidv1", "safe", "fast"]
 repository = "https://github.com/hjiayz/shortid.git"
 categories = ["encoding"]
+readme = "README.MD"
 
 [dependencies]
 failure = "0.1.5"
