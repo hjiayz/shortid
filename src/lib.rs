@@ -115,7 +115,7 @@ fn seq() -> u16 {
 ///
 /// for compatible UUID
 ///
-/// 16 bit worker id and 24 bit machine_id
+/// 16 bit worker id and 32 bit machine_id
 ///
 pub fn next_short_128(machine_id: [u8; 4]) -> Result<[u8; 16], Error> {
     let (t, s) = next(1)?;
