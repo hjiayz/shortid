@@ -7,7 +7,7 @@ license = "AGPL-3.0"
 description = "uuidv1 generator and variant. safe and fast."
 keywords = ["uuid", "uuidv1", "safe", "fast"]
 repository = "https://github.com/hjiayz/shortid.git"
-categories = ["Encoding"]
+categories = ["encoding"]
 
 [dependencies]
 failure = "0.1.5"
