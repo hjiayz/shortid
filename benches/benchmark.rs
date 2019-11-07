@@ -13,23 +13,23 @@ use uuid::v1::{Context, Timestamp};
 
 static CONTEXT: Context = Context::new(0);
 
-fn short_128(id: &[u8; 4]) -> u128 {
+fn short_128(id: [u8; 4]) -> u128 {
     u128::from_be_bytes(shortid::next_short_128(id).unwrap())
 }
 
 fn short_128_benchmark(c: &mut Criterion) {
     c.bench_function("short 128", |b| {
-        b.iter(|| short_128(black_box(&[1, 2, 3, 4])))
+        b.iter(|| short_128(black_box([1, 2, 3, 4])))
     });
 }
 
-fn short_96(id: &[u8; 3]) -> u128 {
+fn short_96(id: [u8; 3]) -> u128 {
     let b: [u8; 16] = unsafe { mem::transmute_copy(&shortid::next_short_96(id, 0).unwrap()) };
     u128::from_be_bytes(b)
 }
 
 fn short_96_benchmark(c: &mut Criterion) {
-    c.bench_function("short 96", |b| b.iter(|| short_96(black_box(&[1, 2, 3]))));
+    c.bench_function("short 96", |b| b.iter(|| short_96(black_box([1, 2, 3]))));
 }
 
 fn short_64(epoch: u64) -> u128 {
@@ -54,13 +54,13 @@ fn uuidv1_benchmark(c: &mut Criterion) {
     });
 }
 
-fn myuuidv1(node_id: &[u8; 6]) -> u128 {
+fn myuuidv1(node_id: [u8; 6]) -> u128 {
     u128::from_be_bytes(shortid::uuidv1(node_id).unwrap())
 }
 
 fn myuuidv1_benchmark(c: &mut Criterion) {
     c.bench_function("myuuidv1", |b| {
-        b.iter(|| myuuidv1(black_box(&[1, 2, 3, 4, 5, 6])))
+        b.iter(|| myuuidv1(black_box([1, 2, 3, 4, 5, 6])))
     });
 }
 
@@ -69,7 +69,7 @@ fn short_128_benchmark_parallel(c: &mut Criterion) {
         b.iter(|| {
             let result: Vec<_> = (0u32..1000)
                 .into_par_iter()
-                .map(|v: u32| short_128(black_box(&v.to_le_bytes())))
+                .map(|v: u32| short_128(black_box(v.to_le_bytes())))
                 .collect();
             result
         })
@@ -81,7 +81,7 @@ fn short_96_benchmark_parallel(c: &mut Criterion) {
         b.iter(|| {
             let result: Vec<_> = (0u32..1000)
                 .into_par_iter()
-                .map(|v: u32| short_96(black_box(&unsafe { mem::transmute_copy(&v) })))
+                .map(|v: u32| short_96(black_box(unsafe { mem::transmute_copy(&v) })))
                 .collect();
             result
         })
@@ -122,7 +122,7 @@ fn myuuidv1_benchmark_parallel(c: &mut Criterion) {
                 .into_par_iter()
                 .map(|v: u32| {
                     let b = v.to_le_bytes();
-                    myuuidv1(black_box(&[b[0], b[1], b[2], b[3], 0, 0]))
+                    myuuidv1(black_box([b[0], b[1], b[2], b[3], 0, 0]))
                 })
                 .collect();
             result

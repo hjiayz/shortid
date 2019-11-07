@@ -12,8 +12,20 @@
 //! }
 //!
 //! fn main() {
+//!
 //!     let mac = [1,2,3,4,5,6];
-//!     println!("{}" , to_string(&uuidv1(&mac).unwrap()));
+//!     let epoch = 0;
+//!
+//!     println!("{}" , to_string(&uuidv1(mac).unwrap()));
+//!
+//!     let mac = [1,2,3,4];
+//!     println!("{}" , to_string(&next_short_128(mac).unwrap()));
+//!
+//!     let mac = [1,2,3];
+//!     println!("{}" , to_string(&next_short_96(mac,epoch).unwrap()));
+//!
+//!     println!("{}" , to_string(&next_short_64(epoch).unwrap()));
+//!
 //! }
 //! ```
 
@@ -72,7 +84,7 @@ fn time_inc(min_interval: u16) -> Result<u64, Error> {
         if cfg!(test) && (*time) >= now()? {
             return Err(Error::TimeOverflow);
         }
-        *time += min_interval as u64;
+        *time += u64::from(min_interval);
         Ok(*time)
     })
 }
@@ -80,7 +92,7 @@ fn time_inc(min_interval: u16) -> Result<u64, Error> {
 fn next(min_interval: u16) -> Result<(u64, u16), Error> {
     SEQ.with(|s| {
         let mut seq = s.borrow_mut();
-        if *seq < (1 << 14 - 1) {
+        if *seq < ((1 << 14) - 1) {
             *seq += 1;
             Ok((timestamp(), *seq))
         } else {
@@ -104,7 +116,7 @@ fn seq() -> u16 {
 /// for compatible UUID
 /// 16 bit worker id and 24 bit machine_id
 ///
-pub fn next_short_128(machine_id: &[u8; 4]) -> Result<[u8; 16], Error> {
+pub fn next_short_128(machine_id: [u8; 4]) -> Result<[u8; 16], Error> {
     let (t, s) = next(1)?;
     let w = worker_id();
     let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
@@ -139,7 +151,7 @@ pub fn next_short_128(machine_id: &[u8; 4]) -> Result<[u8; 16], Error> {
 /// epoch: 100 nanosecond timestamp , unix epoch
 /// Max IDs per Second : 20_000_000
 ///
-pub fn next_short_96(machine_id: &[u8; 3], epoch: u64) -> Result<[u8; 12], Error> {
+pub fn next_short_96(machine_id: [u8; 3], epoch: u64) -> Result<[u8; 12], Error> {
     let (mut t, s) = next(1 << TIMESTAMP42SHIFT)?;
     t = (t
         .checked_sub(UUID_TICKS_BETWEEN_EPOCHS)
@@ -166,7 +178,7 @@ pub fn next_short_96(machine_id: &[u8; 3], epoch: u64) -> Result<[u8; 12], Error
     ])
 }
 
-pub fn short_96_to_128(short_96: &[u8; 12], epoch: u64, machine_id_hi: u8) -> [u8; 16] {
+pub fn short_96_to_128(short_96: [u8; 12], epoch: u64, machine_id_hi: u8) -> [u8; 16] {
     let c = short_96;
     let t = ((u64::from_le_bytes([c[5], c[4], c[3], c[2], c[1], c[0], 0, 0]) >> 6)
         << TIMESTAMP42SHIFT)
@@ -228,7 +240,7 @@ pub fn next_short_64(epoch: u64) -> Result<[u8; 8], Error> {
     ])
 }
 
-pub fn short_64_to_96(short_64: &[u8; 8], machine_id: &[u8; 3]) -> [u8; 12] {
+pub fn short_64_to_96(short_64: [u8; 8], machine_id: [u8; 3]) -> [u8; 12] {
     let s = short_64;
     [
         s[0],
@@ -246,16 +258,16 @@ pub fn short_64_to_96(short_64: &[u8; 8], machine_id: &[u8; 3]) -> [u8; 12] {
     ]
 }
 
-pub fn short_64_to_128(short_64: &[u8; 8], epoch: u64, machine_id: &[u8; 4]) -> [u8; 16] {
-    let short96 = short_64_to_96(&short_64, &[machine_id[1], machine_id[2], machine_id[3]]);
-    short_96_to_128(&short96, epoch, machine_id[0])
+pub fn short_64_to_128(short_64: [u8; 8], epoch: u64, machine_id: [u8; 4]) -> [u8; 16] {
+    let short96 = short_64_to_96(short_64, [machine_id[1], machine_id[2], machine_id[3]]);
+    short_96_to_128(short96, epoch, machine_id[0])
 }
 
 #[test]
 fn test_128() {
     use uuid::Uuid;
     use uuid::Variant;
-    let id = next_short_128(&[1, 1, 1, 1]).unwrap();
+    let id = next_short_128([1, 1, 1, 1]).unwrap();
     let hex: String = id.into_iter().map(|val| format!("{:0>2x}", val)).collect();
     let my_uuid = Uuid::parse_str(&hex).unwrap();
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
@@ -269,8 +281,8 @@ fn test_128() {
 fn test_96() {
     use uuid::Uuid;
     use uuid::Variant;
-    let id96 = next_short_96(&[1, 1, 1], 0).unwrap();
-    let id128 = short_96_to_128(&id96, 0, 0);
+    let id96 = next_short_96([1, 1, 1], 0).unwrap();
+    let id128 = short_96_to_128(id96, 0, 0);
     let hex: String = id128
         .into_iter()
         .map(|val| format!("{:0>2x}", val))
@@ -288,7 +300,7 @@ fn test_64() {
     use uuid::Uuid;
     use uuid::Variant;
     let id64 = next_short_64(0).unwrap();
-    let id128 = short_64_to_128(&id64, 0, &[1u8, 1, 1, 1]);
+    let id128 = short_64_to_128(id64, 0, [1u8, 1, 1, 1]);
     let hex: String = id128
         .into_iter()
         .map(|val| format!("{:0>2x}", val))
@@ -313,7 +325,7 @@ fn next_atom() -> Result<(u64, u16), Error> {
         if *ts == 0 {
             *ts = now()?;
         }
-        if *seq < (1 << 14 - 1) {
+        if *seq < ((1 << 14) - 1) {
             *seq += 1;
         } else {
             if *ts >= now()? {
@@ -329,7 +341,7 @@ fn next_atom() -> Result<(u64, u16), Error> {
 ///
 /// uuidv1 generator
 ///
-pub fn uuidv1(machine_id: &[u8; 6]) -> Result<[u8; 16], Error> {
+pub fn uuidv1(machine_id: [u8; 6]) -> Result<[u8; 16], Error> {
     let (t, s) = next_atom()?;
     let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
     let time_mid = (((t >> 32) & 0xFFFF) as u16).to_be_bytes();
@@ -357,7 +369,7 @@ pub fn uuidv1(machine_id: &[u8; 6]) -> Result<[u8; 16], Error> {
 ///
 /// uuidv1 generator
 ///
-pub fn next_short_128_sync(machine_id: &[u8; 6]) -> Result<[u8; 16], Error> {
+pub fn next_short_128_sync(machine_id: [u8; 6]) -> Result<[u8; 16], Error> {
     uuidv1(machine_id)
 }
 
@@ -375,7 +387,7 @@ fn seq_sync() -> u16 {
 fn test_uuidv1() {
     use uuid::Uuid;
     use uuid::Variant;
-    let id128 = next_short_128_sync(&[0, 0, 0, 0, 0, 0]).unwrap();
+    let id128 = next_short_128_sync([0, 0, 0, 0, 0, 0]).unwrap();
     let hex: String = id128
         .into_iter()
         .map(|val| format!("{:0>2x}", val))
