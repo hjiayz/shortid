@@ -1,3 +1,22 @@
+//!
+//! Example
+//!
+//! ```rust
+//! use shortid::*;
+//!
+//! fn to_string(src:&[u8])->String {
+//!     src
+//!         .into_iter()
+//!         .map(|val| format!("{:0>2x}", val))
+//!         .collect()
+//! }
+//!
+//! fn main() {
+//!     let mac = [1,2,3,4,5,6];
+//!     println!("{}" , to_string(&uuidv1(&mac).unwrap()));
+//! }
+//! ```
+
 use ::failure::Fail;
 
 #[derive(Fail, Debug)]
