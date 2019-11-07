@@ -3,6 +3,7 @@ name = "shortid"
 version = "1.0.0"
 authors = ["hjiayz <hjiayz@hotmail.com>"]
 edition = "2018"
+license = "AGPL-3.0"
 
 [dependencies]
 failure = "0.1.5"

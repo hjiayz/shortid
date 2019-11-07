@@ -16,6 +16,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const UUID_TICKS_BETWEEN_EPOCHS: u64 = 0x01B2_1DD2_1381_4000;
+const TIMESTAMP42SHIFT: u8 = 13;
 
 static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -46,27 +47,27 @@ fn worker_id() -> [u8; 2] {
     WORKER_ID.with(|f| *f)
 }
 
-fn time_inc(min_interval: u16) -> Result<(), Error> {
+fn time_inc(min_interval: u16) -> Result<u64, Error> {
     TIMESTAMP.with(|t| {
         let mut time = t.borrow_mut();
-        if (*time) >= now()? {
+        if cfg!(test) && (*time) >= now()? {
             return Err(Error::TimeOverflow);
         }
         *time += min_interval as u64;
-        Ok(())
+        Ok(*time)
     })
 }
 
-fn next(min_interval: u16) -> Result<(), Error> {
+fn next(min_interval: u16) -> Result<(u64, u16), Error> {
     SEQ.with(|s| {
         let mut seq = s.borrow_mut();
         if *seq < (1 << 14 - 1) {
             *seq += 1;
-            Ok(())
+            Ok((timestamp(), *seq))
         } else {
-            time_inc(min_interval)?;
+            let t = time_inc(min_interval)?;
             *seq = 0;
-            Ok(())
+            Ok((t, 0))
         }
     })
 }
@@ -75,6 +76,7 @@ fn timestamp() -> u64 {
     TIMESTAMP.with(|t| *t.borrow())
 }
 
+#[cfg(test)]
 fn seq() -> u16 {
     SEQ.with(|s| *s.borrow())
 }
@@ -84,9 +86,7 @@ fn seq() -> u16 {
 /// 16 bit worker id and 24 bit machine_id
 ///
 pub fn next_short_128(machine_id: &[u8; 4]) -> Result<[u8; 16], Error> {
-    next(1)?;
-    let t = timestamp();
-    let s = seq();
+    let (t, s) = next(1)?;
     let w = worker_id();
     let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
     let time_mid = (((t >> 32) & 0xFFFF) as u16).to_be_bytes();
@@ -112,21 +112,22 @@ pub fn next_short_128(machine_id: &[u8; 4]) -> Result<[u8; 16], Error> {
 }
 
 ///
-/// 42 bit milliseconds timestamp
+/// 42 bit timestamp 819_200 ns * 2 ^ 42 (114 years)
 /// 14 bit sequence
 /// 16 bit worker id
 /// 24 bit machine_id
 /// Big Endian Order
+/// epoch: 100 nanosecond timestamp , unix epoch
+/// Max IDs per Second : 20_000_000
 ///
 pub fn next_short_96(machine_id: &[u8; 3], epoch: u64) -> Result<[u8; 12], Error> {
-    next(10000)?;
-    let t = (timestamp()
+    let (mut t, s) = next(1 << TIMESTAMP42SHIFT)?;
+    t = (t
         .checked_sub(UUID_TICKS_BETWEEN_EPOCHS)
         .ok_or_else(|| Error::EpochException)?
         .checked_sub(epoch)
         .ok_or_else(|| Error::EpochException)?)
-        / 10000;
-    let s = seq();
+        >> TIMESTAMP42SHIFT;
     let t_hi = (t >> 2).to_be_bytes();
     let [t_low_and_s_hi, s_low] = (((t as u16) << 14) | s).to_be_bytes();
     let w = worker_id();
@@ -148,7 +149,8 @@ pub fn next_short_96(machine_id: &[u8; 3], epoch: u64) -> Result<[u8; 12], Error
 
 pub fn short_96_to_128(short_96: &[u8; 12], epoch: u64, machine_id_hi: u8) -> [u8; 16] {
     let c = short_96;
-    let t = (u64::from_le_bytes([c[5], c[4], c[3], c[2], c[1], c[0], 0, 0]) >> 6) * 10000
+    let t = ((u64::from_le_bytes([c[5], c[4], c[3], c[2], c[1], c[0], 0, 0]) >> 6)
+        << TIMESTAMP42SHIFT)
         + epoch
         + UUID_TICKS_BETWEEN_EPOCHS;
     let s = u16::from_le_bytes([c[6], c[5]]) & 0x3fff;
@@ -178,20 +180,21 @@ pub fn short_96_to_128(short_96: &[u8; 12], epoch: u64, machine_id_hi: u8) -> [u
 ///
 /// for standalone
 /// the number of threads less than 256
+/// epoch: 100 nanosecond timestamp , unix epoch
+/// Max IDs per Second : 20_000_000
 ///
 pub fn next_short_64(epoch: u64) -> Result<[u8; 8], Error> {
     let w = worker_id();
     if w[0] != 0 {
         return Err(Error::WorkerIDOverflow);
     }
-    next(10000)?;
-    let t = (timestamp()
+    let (mut t, s) = next(10000)?;
+    t = (t
         .checked_sub(UUID_TICKS_BETWEEN_EPOCHS)
         .ok_or_else(|| Error::EpochException)?
         .checked_sub(epoch)
         .ok_or_else(|| Error::EpochException)?)
-        / 10000;
-    let s = seq();
+        >> TIMESTAMP42SHIFT;
     let t_hi = (t >> 2).to_be_bytes();
     let [t_low_and_s_hi, s_low] = (((t as u16) << 14) | s).to_be_bytes();
     Ok([
@@ -255,7 +258,7 @@ fn test_96() {
         .collect();
     let my_uuid = Uuid::parse_str(&hex).unwrap();
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
-    assert_eq!(ticks, timestamp() / 10000 * 10000);
+    assert_eq!(ticks, timestamp() >> TIMESTAMP42SHIFT << TIMESTAMP42SHIFT);
     assert_eq!(counter, seq());
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
@@ -273,7 +276,7 @@ fn test_64() {
         .collect();
     let my_uuid = Uuid::parse_str(&hex).unwrap();
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
-    assert_eq!(ticks, timestamp() / 10000 * 10000);
+    assert_eq!(ticks, timestamp() >> TIMESTAMP42SHIFT << TIMESTAMP42SHIFT);
     assert_eq!(counter, seq());
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
@@ -339,10 +342,12 @@ pub fn next_short_128_sync(machine_id: &[u8; 6]) -> Result<[u8; 16], Error> {
     uuidv1(machine_id)
 }
 
+#[cfg(test)]
 fn timestamp_sync() -> u64 {
     unsafe { *TIMESTAMP_ATOM.get_mut() }
 }
 
+#[cfg(test)]
 fn seq_sync() -> u16 {
     unsafe { *SEQ_ATOM.get_mut() }
 }
