@@ -114,6 +114,7 @@ fn seq() -> u16 {
 
 ///
 /// for compatible UUID
+///
 /// 16 bit worker id and 24 bit machine_id
 ///
 pub fn next_short_128(machine_id: [u8; 4]) -> Result<[u8; 16], Error> {
@@ -143,12 +144,20 @@ pub fn next_short_128(machine_id: [u8; 4]) -> Result<[u8; 16], Error> {
 }
 
 ///
+/// for network
+///
 /// 42 bit timestamp 819_200 ns * 2 ^ 42 (114 years)
+///
 /// 14 bit sequence
-/// 16 bit worker id
-/// 24 bit machine_id
+///
+/// 16 bit worker_id (max threads number 65_536)
+///
+/// 24 bit machine_id (max machines number 16_777_216 )
+///
 /// Big Endian Order
+///
 /// epoch: 100 nanosecond timestamp , unix epoch
+///
 /// Max IDs per Second : 20_000_000
 ///
 pub fn next_short_96(machine_id: [u8; 3], epoch: u64) -> Result<[u8; 12], Error> {
@@ -210,8 +219,15 @@ pub fn short_96_to_128(short_96: [u8; 12], epoch: u64, machine_id_hi: u8) -> [u8
 
 ///
 /// for standalone
-/// the number of threads less than 256
+///
+/// 42 bit timestamp 819_200 ns * 2 ^ 42 (114 years)
+///
+/// 14 bit sequence
+///
+/// 8 bit worker_id (max threads number 256)
+///
 /// epoch: 100 nanosecond timestamp , unix epoch
+///
 /// Max IDs per Second : 20_000_000
 ///
 pub fn next_short_64(epoch: u64) -> Result<[u8; 8], Error> {
