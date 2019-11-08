@@ -235,7 +235,7 @@ pub fn next_short_64(epoch: u64) -> Result<[u8; 8], Error> {
     if w[0] != 0 {
         return Err(Error::WorkerIDOverflow);
     }
-    let (mut t, s) = next(10000)?;
+    let (mut t, s) = next(1 << TIMESTAMP42SHIFT)?;
     t = (t
         .checked_sub(UUID_TICKS_BETWEEN_EPOCHS)
         .ok_or_else(|| Error::EpochException)?
@@ -289,6 +289,17 @@ fn test_128() {
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
     assert_eq!(ticks, timestamp());
     assert_eq!(counter, seq());
+
+    while seq() != 0 {
+        next_short_128([1, 1, 1, 1]).unwrap();
+    }
+    let ticks = timestamp();
+    for count in 0..1 << 14 {
+        assert_eq!(count, seq());
+        next_short_128([1, 1, 1, 1]).unwrap();
+    }
+    assert_eq!(ticks + 1, timestamp());
+
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }
@@ -307,6 +318,17 @@ fn test_96() {
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
     assert_eq!(ticks, timestamp() >> TIMESTAMP42SHIFT << TIMESTAMP42SHIFT);
     assert_eq!(counter, seq());
+
+    while seq() != 0 {
+        next_short_96([1, 1, 1], 0).unwrap();
+    }
+    let ticks = timestamp();
+    for count in 0..1 << 14 {
+        assert_eq!(count, seq());
+        next_short_96([1, 1, 1], 0).unwrap();
+    }
+    assert_eq!(ticks + (1 << TIMESTAMP42SHIFT), timestamp());
+
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }
@@ -325,6 +347,17 @@ fn test_64() {
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
     assert_eq!(ticks, timestamp() >> TIMESTAMP42SHIFT << TIMESTAMP42SHIFT);
     assert_eq!(counter, seq());
+
+    while seq() != 0 {
+        next_short_64(0).unwrap();
+    }
+    let ticks = timestamp();
+    for count in 0..1 << 14 {
+        assert_eq!(count, seq());
+        next_short_64(0).unwrap();
+    }
+    assert_eq!(ticks + (1 << TIMESTAMP42SHIFT), timestamp());
+
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }
@@ -412,6 +445,17 @@ fn test_uuidv1() {
     let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
     assert_eq!(ticks, timestamp_sync());
     assert_eq!(counter, seq_sync());
+
+    while seq_sync() != 0 {
+        next_short_128_sync([0, 0, 0, 0, 0, 0]).unwrap();
+    }
+    let ticks = timestamp_sync();
+    for count in 0..(1 << 14) {
+        assert_eq!(count, seq_sync());
+        next_short_128_sync([0, 0, 0, 0, 0, 0]).unwrap();
+    }
+    assert_eq!(ticks + 1, timestamp_sync());
+
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }
