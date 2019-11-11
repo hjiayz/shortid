@@ -49,17 +49,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const UUID_TICKS_BETWEEN_EPOCHS: u64 = 0x01B2_1DD2_1381_4000;
 const TIMESTAMP42SHIFT: u8 = 13;
 
-static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
+static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
     static WORKER_ID: [u8;2] = {
-        unsafe{
             let id = COUNTER.fetch_add(1, Ordering::SeqCst);
             if id > u16::max_value() as usize {
                 panic!("too many threads")
             };
             (id as u16).to_be_bytes()
-        }
     };
     static SEQ: RefCell<u16> = RefCell::new(0);
     static TIMESTAMP: RefCell<u64> = RefCell::new(now().unwrap());
@@ -364,27 +362,29 @@ fn test_64() {
 
 use std::sync::atomic::{AtomicU16, AtomicU64};
 
-static mut TIMESTAMP_ATOM: AtomicU64 = AtomicU64::new(0);
-static mut SEQ_ATOM: AtomicU16 = AtomicU16::new(0);
+static TIMESTAMP_ATOM: AtomicU64 = AtomicU64::new(0);
+static SEQ_ATOM: AtomicU16 = AtomicU16::new(0);
 
 fn next_atom() -> Result<(u64, u16), Error> {
-    unsafe {
-        let seq = SEQ_ATOM.get_mut();
-        let ts = TIMESTAMP_ATOM.get_mut();
-        if *ts == 0 {
-            *ts = now()?;
+        let mut seq = SEQ_ATOM.load(Ordering::Acquire);
+        let mut ts = TIMESTAMP_ATOM.load(Ordering::Acquire);
+        if ts == 0 {
+            ts = now()?;
+            TIMESTAMP_ATOM.store(ts,Ordering::SeqCst);
         }
-        if *seq < ((1 << 14) - 1) {
-            *seq += 1;
+        if seq < ((1 << 14) - 1) {
+            seq += 1;
+            SEQ_ATOM.store(seq,Ordering::SeqCst);
         } else {
-            if *ts >= now()? {
+            if ts >= now()? {
                 return Err(Error::TimeOverflow);
             }
-            *ts += 1;
-            *seq = 0;
+            ts += 1;
+            seq = 0;
+            TIMESTAMP_ATOM.store(ts,Ordering::SeqCst);
+            SEQ_ATOM.store(seq,Ordering::SeqCst);
         };
-        Ok((*ts, *seq))
-    }
+        Ok((ts, seq))
 }
 
 ///
@@ -424,12 +424,12 @@ pub fn next_short_128_sync(machine_id: [u8; 6]) -> Result<[u8; 16], Error> {
 
 #[cfg(test)]
 fn timestamp_sync() -> u64 {
-    unsafe { *TIMESTAMP_ATOM.get_mut() }
+   TIMESTAMP_ATOM.load(Ordering::Acquire)
 }
 
 #[cfg(test)]
 fn seq_sync() -> u16 {
-    unsafe { *SEQ_ATOM.get_mut() }
+    SEQ_ATOM.load(Ordering::Acquire)
 }
 
 #[test]
