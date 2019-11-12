@@ -360,31 +360,14 @@ fn test_64() {
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }
 
-use std::sync::atomic::{AtomicU16, AtomicU64};
+use std::sync::atomic::AtomicU16;
 
-static TIMESTAMP_ATOM: AtomicU64 = AtomicU64::new(0);
 static SEQ_ATOM: AtomicU16 = AtomicU16::new(0);
 
 fn next_atom() -> Result<(u64, u16), Error> {
-        let mut seq = SEQ_ATOM.load(Ordering::Acquire);
-        let mut ts = TIMESTAMP_ATOM.load(Ordering::Acquire);
-        if ts == 0 {
-            ts = now()?;
-            TIMESTAMP_ATOM.store(ts,Ordering::SeqCst);
-        }
-        if seq < ((1 << 14) - 1) {
-            seq += 1;
-            SEQ_ATOM.store(seq,Ordering::SeqCst);
-        } else {
-            if ts >= now()? {
-                return Err(Error::TimeOverflow);
-            }
-            ts += 1;
-            seq = 0;
-            TIMESTAMP_ATOM.store(ts,Ordering::SeqCst);
-            SEQ_ATOM.store(seq,Ordering::SeqCst);
-        };
-        Ok((ts, seq))
+    let ts = now()?;
+    let seq = SEQ_ATOM.fetch_add(1, Ordering::SeqCst);
+    Ok((ts, seq))
 }
 
 ///
@@ -395,6 +378,7 @@ pub fn uuidv1(machine_id: [u8; 6]) -> Result<[u8; 16], Error> {
     let time_low = ((t & 0xFFFF_FFFF) as u32).to_be_bytes();
     let time_mid = (((t >> 32) & 0xFFFF) as u16).to_be_bytes();
     let time_high_and_version = ((((t >> 48) & 0x0FFF) as u16) | (1 << 12)).to_be_bytes();
+    let clock_seq_and_reserved = (s & 0x3FFF | 0x8000).to_be_bytes();
     Ok([
         time_low[0],
         time_low[1],
@@ -404,8 +388,8 @@ pub fn uuidv1(machine_id: [u8; 6]) -> Result<[u8; 16], Error> {
         time_mid[1],
         time_high_and_version[0],
         time_high_and_version[1],
-        (((s & 0x3F00) >> 8) as u8) | 0x80,
-        (s & 0xFF) as u8,
+        clock_seq_and_reserved[0],
+        clock_seq_and_reserved[1],
         machine_id[0],
         machine_id[1],
         machine_id[2],
@@ -423,13 +407,8 @@ pub fn next_short_128_sync(machine_id: [u8; 6]) -> Result<[u8; 16], Error> {
 }
 
 #[cfg(test)]
-fn timestamp_sync() -> u64 {
-   TIMESTAMP_ATOM.load(Ordering::Acquire)
-}
-
-#[cfg(test)]
 fn seq_sync() -> u16 {
-    SEQ_ATOM.load(Ordering::Acquire)
+    SEQ_ATOM.load(Ordering::SeqCst)
 }
 
 #[test]
@@ -442,20 +421,8 @@ fn test_uuidv1() {
         .map(|val| format!("{:0>2x}", val))
         .collect();
     let my_uuid = Uuid::parse_str(&hex).unwrap();
-    let (ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
-    assert_eq!(ticks, timestamp_sync());
-    assert_eq!(counter, seq_sync());
-
-    while seq_sync() != 0 {
-        next_short_128_sync([0, 0, 0, 0, 0, 0]).unwrap();
-    }
-    let ticks = timestamp_sync();
-    for count in 0..(1 << 14) {
-        assert_eq!(count, seq_sync());
-        next_short_128_sync([0, 0, 0, 0, 0, 0]).unwrap();
-    }
-    assert_eq!(ticks + 1, timestamp_sync());
-
+    let (_ticks, counter) = my_uuid.to_timestamp().unwrap().to_rfc4122();
+    assert_eq!(counter, seq_sync() - 1);
     assert_eq!(my_uuid.get_version_num(), 1usize);
     assert_eq!(my_uuid.get_variant().unwrap(), Variant::RFC4122);
 }

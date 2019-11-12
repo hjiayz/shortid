@@ -11,7 +11,7 @@ categories = ["encoding"]
 readme = "README.MD"
 
 [dependencies]
-failure = "0.1.5"
+failure = "0.1.6"
 
 [dev-dependencies]
 uuid = { version = "0.8.1", features = ["v1"] }
