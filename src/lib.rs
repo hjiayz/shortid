@@ -29,17 +29,17 @@
 //! }
 //! ```
 
-use ::failure::Fail;
+use thiserror::Error as ThisError;
 
-#[derive(Fail, Debug)]
+#[derive(ThisError, Debug)]
 pub enum Error {
-    #[fail(display = "There is not enough ID now")]
+    #[error("There is not enough ID now")]
     TimeOverflow,
-    #[fail(display = "SystemTime before UNIX EPOCH!")]
+    #[error("SystemTime before UNIX EPOCH!")]
     SystemTimeException,
-    #[fail(display = "Too many threads")]
+    #[error("Too many threads")]
     WorkerIDOverflow,
-    #[fail(display = "SystemTime before EPOCH!")]
+    #[error("SystemTime before EPOCH!")]
     EpochException,
 }
 
